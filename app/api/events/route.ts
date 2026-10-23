@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 import { events, type EventItem } from "@/lib/events";
 import { getSession } from "@/lib/session";
+import { promoteWaitlist } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  promoteWaitlist();
   return NextResponse.json({ events: events.filter((event) => event.status === "published") });
 }
 

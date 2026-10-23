@@ -1,4 +1,6 @@
+import { randomUUID } from "node:crypto";
 import type { DemoUser } from "@/lib/session";
+import { events } from "@/lib/events";
 
 export type TicketOrder = {
   id: string;
@@ -11,18 +13,86 @@ export type TicketOrder = {
   tickets: { token: string; checkedInAt: string | null }[];
 };
 
+export type WaitlistEntry = {
+  id: string;
+  userId: string;
+  name: string;
+  createdAt: string;
+};
+
+export type WaitlistNotification = {
+  id: string;
+  eventId: string;
+  eventTitle: string;
+  userId: string;
+  status: "active" | "claimed" | "expired";
+  createdAt: string;
+  holdExpiresAt: string;
+};
+
 type TartanStore = {
   orders: TicketOrder[];
-  waitlist: Map<string, Set<string>>;
+  waitlist: Map<string, WaitlistEntry[]>;
+  notifications: WaitlistNotification[];
   requestTimes: Map<string, number[]>;
 };
 
-const globalForStore = globalThis as typeof globalThis & { tartanStore?: TartanStore };
-export const store: TartanStore = globalForStore.tartanStore ?? (globalForStore.tartanStore = {
-  orders: [],
+type PreviousTartanStore = {
+  orders: TicketOrder[];
+  waitlist: Map<string, WaitlistEntry[] | Set<string>>;
+  notifications?: WaitlistNotification[];
+  requestTimes: Map<string, number[]>;
+};
+
+const globalForStore = globalThis as typeof globalThis & { tartanStore?: PreviousTartanStore };
+const previousStore = globalForStore.tartanStore;
+export const store: TartanStore = {
+  orders: previousStore?.orders ?? [],
   waitlist: new Map(),
-  requestTimes: new Map(),
-});
+  notifications: previousStore?.notifications ?? [],
+  requestTimes: previousStore?.requestTimes ?? new Map(),
+};
+for (const [eventId, entries] of previousStore?.waitlist ?? []) {
+  const queue = Array.isArray(entries) ? entries : Array.from(entries, (userId) => ({
+    id: randomUUID(),
+    userId,
+    name: userId,
+    createdAt: new Date().toISOString(),
+  }));
+  store.waitlist.set(eventId, queue);
+}
+globalForStore.tartanStore = store;
+
+export function promoteWaitlist(eventId?: string) {
+  const now = Date.now();
+  const availableEvents = events.filter((event) => !eventId || event.id === eventId);
+
+  for (const event of availableEvents) {
+    for (const notification of store.notifications) {
+      if (notification.eventId === event.id && notification.status === "active" && Date.parse(notification.holdExpiresAt) <= now) {
+        notification.status = "expired";
+        event.sold = Math.max(0, event.sold - 1);
+      }
+    }
+
+    const queue = store.waitlist.get(event.id) ?? [];
+    while (event.status === "published" && event.sold < event.capacity && queue.length > 0) {
+      const entry = queue.shift()!;
+      event.sold += 1;
+      const createdAt = new Date(now).toISOString();
+      store.notifications.push({
+        id: entry.id,
+        eventId: event.id,
+        eventTitle: event.title,
+        userId: entry.userId,
+        status: "active",
+        createdAt,
+        holdExpiresAt: new Date(now + 30 * 60 * 1000).toISOString(),
+      });
+    }
+    store.waitlist.set(event.id, queue);
+  }
+}
 
 export function isRateLimited(user: DemoUser, action: string, limit: number, windowMs: number) {
   const key = `${user.id}:${action}`;

@@ -15,6 +15,14 @@ type Order = {
   seats: number;
   tickets: { token: string; checkedInAt: string | null }[];
 };
+type WaitlistNotification = {
+  id: string;
+  eventId: string;
+  eventTitle: string;
+  status: "active" | "claimed" | "expired";
+  createdAt: string;
+  holdExpiresAt: string;
+};
 type View = "discover" | "tickets" | "organize";
 const filters = ["All events", "Music", "Arts & Culture", "Community"];
 const money = (cents: number) => cents === 0 ? "Free" : `$${(cents / 100).toFixed(0)}`;
@@ -27,6 +35,7 @@ export default function Home() {
   const [events, setEvents] = useState<EventItem[]>([]);
   const [user, setUser] = useState<DemoUser | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [notifications, setNotifications] = useState<WaitlistNotification[]>([]);
   const [filter, setFilter] = useState("All events");
   const [view, setView] = useState<View>("discover");
   const [search, setSearch] = useState("");
@@ -35,6 +44,7 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [signInOpen, setSignInOpen] = useState(false);
+  const [signInName, setSignInName] = useState("");
   const [seatCount, setSeatCount] = useState(1);
   const [attendees, setAttendees] = useState<{ name: string; email: string; checkedInAt: string | null; seats: number }[]>([]);
   const [organizeEvent, setOrganizeEvent] = useState("");
@@ -50,8 +60,15 @@ export default function Home() {
       setEvents(eventData.events);
       setUser(sessionData.user);
       if (sessionData.user) {
-        const orderResponse = await fetch("/api/orders");
-        if (orderResponse.ok) setOrders((await orderResponse.json()).orders);
+        const [orderResponse, notificationResponse] = await Promise.all([
+          fetch("/api/orders"), fetch("/api/waitlist"),
+        ]);
+        if (!orderResponse.ok || !notificationResponse.ok) throw new Error("Couldn't load your tickets and waitlist updates.");
+        setOrders((await orderResponse.json()).orders);
+        setNotifications((await notificationResponse.json()).notifications);
+      } else {
+        setOrders([]);
+        setNotifications([]);
       }
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Something went wrong. Please try again.");
@@ -61,6 +78,23 @@ export default function Home() {
   }, []);
 
   useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    if (!user) return;
+    let stopped = false;
+    const checkNotifications = async () => {
+      try {
+        const response = await fetch("/api/waitlist");
+        if (!response.ok) throw new Error("Couldn't check your waitlist updates.");
+        const result = await response.json();
+        if (!stopped) setNotifications(result.notifications);
+      } catch (error) {
+        if (!stopped) setNotice(error instanceof Error ? error.message : "Couldn't check your waitlist updates.");
+      }
+    };
+    void checkNotifications();
+    const interval = window.setInterval(() => void checkNotifications(), 5000);
+    return () => { stopped = true; window.clearInterval(interval); };
+  }, [user?.id]);
   useEffect(() => {
     if (!notice) return;
     const timeout = window.setTimeout(() => setNotice(""), 4000);
@@ -75,12 +109,13 @@ export default function Home() {
 
   async function signIn(role: "student" | "officer") {
     setBusy(true);
-    const response = await fetch("/api/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ role }) });
+    const response = await fetch("/api/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: signInName, role }) });
     const result = await response.json();
     setBusy(false);
     if (!response.ok) { setNotice(result.error); return; }
     setUser(result.user);
     setSignInOpen(false);
+    setSignInName("");
     setNotice(`Welcome in, ${result.user.name.split(" ")[0]}.`);
     await refresh();
   }
@@ -113,6 +148,36 @@ export default function Home() {
     const response = await fetch("/api/waitlist", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ eventId: event.id }) });
     const result = await response.json();
     setNotice(response.ok ? `You’re on the list — position ${result.position}.` : result.error);
+  }
+
+  async function claimWaitlistOffer(offer: WaitlistNotification) {
+    setBusy(true);
+    const response = await fetch("/api/orders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ holdId: offer.id }),
+    });
+    const result = await response.json();
+    setBusy(false);
+    if (!response.ok) { setNotice(result.error); await refresh(); return; }
+    setOrders((previous) => [result.order, ...previous]);
+    setNotifications((previous) => previous.map((item) => item.id === offer.id ? { ...item, status: "claimed" } : item));
+    setView("tickets");
+    setNotice("Your held seat is confirmed. No real payment was processed.");
+    await refresh();
+  }
+
+  async function releaseOrder(orderId: string) {
+    if (!window.confirm("Release this demo ticket and offer the seat to the next person on the waitlist?")) return;
+    const response = await fetch("/api/orders", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ orderId }),
+    });
+    const result = await response.json();
+    if (!response.ok) { setNotice(result.error); return; }
+    setNotice(`Released ${result.released} seat${result.released === 1 ? "" : "s"}. The next waitlisted person will be notified.`);
+    await refresh();
   }
 
   async function loadAttendees(eventId: string) {
@@ -187,11 +252,17 @@ export default function Home() {
         </nav>
         <div className="top-actions">
           <span className="semester"><span /> FALL 2026</span>
-          {user ? <button className="user-button" onClick={() => void signOut()} title="Sign out"><span className="avatar">{user.name.split(" ").map((part) => part[0]).join("")}</span><span className="user-name">{user.name.split(" ")[0]}</span><ChevronDown size={14} /></button> : <button className="sign-in" onClick={() => setSignInOpen(true)}>Sign in <ArrowRight size={15} /></button>}
+          {user ? <button className="user-button" onClick={() => void signOut()} title="End preview session"><span className="avatar">{user.name.split(" ").map((part) => part[0]).join("")}</span><span className="user-name">{user.name.split(" ")[0]}</span><ChevronDown size={14} /></button> : <button className="sign-in" onClick={() => setSignInOpen(true)}>Use preview name <ArrowRight size={15} /></button>}
         </div>
       </header>
 
       <div className="demo-ribbon"><ShieldCheck size={14} /> DEMO MODE <span>—</span> Tickets and checkout are for preview only. No payment is processed.</div>
+      {user && notifications.filter((item) => item.status === "active").length > 0 && <section className="waitlist-notifications" aria-label="Waitlist notifications" aria-live="polite">
+        {notifications.filter((item) => item.status === "active").map((offer) => <article className="waitlist-notice" key={offer.id}>
+          <div><strong>A seat opened up for {offer.eventTitle}.</strong><span>We’re holding it for you until {new Date(offer.holdExpiresAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} (30 minutes).</span></div>
+          <button className="buy-button" disabled={busy} onClick={() => void claimWaitlistOffer(offer)}>{events.find((event) => event.id === offer.eventId)?.priceCents ? "Simulated payment" : "Claim free seat"} <ArrowRight size={15} /></button>
+        </article>)}
+      </section>}
 
       {view === "discover" && <div className="page-shell">
         <section className="hero">
@@ -228,7 +299,7 @@ export default function Home() {
 
       {view === "tickets" && <section className="content-page">
         <div className="eyebrow"><span className="eyebrow-line" /> YOUR PLANS</div><h1 className="content-title">Your tickets<span className="title-period">.</span></h1><p className="content-intro">All your campus plans, in one place.</p>
-        {!user ? <div className="empty-state"><strong>Sign in to see your tickets.</strong><button className="sign-in" onClick={() => setSignInOpen(true)}>Sign in <ArrowRight size={15} /></button></div> : myOrders.length ? <div className="ticket-list">{myOrders.map((order) => <article className="owned-ticket" key={order.id}><div className={`owned-art art-${order.event?.color}`}><Ticket size={28} /></div><div className="owned-info"><span>{order.event?.club} · {dateParts(order.event!.date).full}</span><h2>{order.event?.title}</h2><p>{order.seats} {order.seats === 1 ? "ticket" : "tickets"} · {order.event?.location}</p></div><div className="ticket-qr" aria-label="Demo ticket QR code"><span>{order.tickets[0]?.token.slice(0, 16)}</span><i>{Array.from({ length: 25 }, (_, index) => <b key={index} className={(index * 7 + index % 4) % 3 ? "filled" : ""} />)}</i><small>DEMO QR TOKEN</small></div></article>)}</div> : <div className="empty-state"><span className="empty-icon"><Ticket /></span><strong>No tickets yet.</strong><span>Find an event and make a plan.</span><button className="text-action" onClick={() => setView("discover")}>Explore events <ArrowRight size={15} /></button></div>}
+        {!user ? <div className="empty-state"><strong>Enter a preview name to see your tickets.</strong><button className="sign-in" onClick={() => setSignInOpen(true)}>Continue <ArrowRight size={15} /></button></div> : myOrders.length ? <div className="ticket-list">{myOrders.map((order) => <article className="owned-ticket" key={order.id}><div className={`owned-art art-${order.event?.color}`}><Ticket size={28} /></div><div className="owned-info"><span>{order.event?.club} · {dateParts(order.event!.date).full}</span><h2>{order.event?.title}</h2><p>{order.seats} {order.seats === 1 ? "ticket" : "tickets"} · {order.event?.location}</p><button className="text-action" onClick={() => void releaseOrder(order.id)}>Release ticket and open the seat <ArrowRight size={15} /></button></div><div className="ticket-qr" aria-label="Demo ticket QR code"><span>{order.tickets[0]?.token.slice(0, 16)}</span><i>{Array.from({ length: 25 }, (_, index) => <b key={index} className={(index * 7 + index % 4) % 3 ? "filled" : ""} />)}</i><small>DEMO QR TOKEN</small></div></article>)}</div> : <div className="empty-state"><span className="empty-icon"><Ticket /></span><strong>No tickets yet.</strong><span>Find an event and make a plan.</span><button className="text-action" onClick={() => setView("discover")}>Explore events <ArrowRight size={15} /></button></div>}
       </section>}
 
       {view === "organize" && <section className="content-page">
@@ -240,9 +311,9 @@ export default function Home() {
 
       <footer className="footer"><a href="#" className="brand footer-brand"><span className="brand-mark"><Ticket size={17} /></span><span>tartan<span className="brand-light">tickets</span></span></a><span>MADE FOR THE MOMENTS BETWEEN CLASSES <span className="tiny-star">✳</span></span><span>CARNEGIE MELLON UNIVERSITY · FALL 2026</span></footer>
 
-      {activeEvent && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setActiveEvent(null); }}><section className="event-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><button className="modal-close" aria-label="Close" onClick={() => setActiveEvent(null)}><X size={19} /></button><div className={`modal-art art-${activeEvent.color}`}><span className="art-tag">{activeEvent.category}</span><span className="modal-date">{dateParts(activeEvent.date).month} {dateParts(activeEvent.date).day}</span></div><div className="modal-content"><span className="event-meta">{activeEvent.club} <span className="meta-dot" /> {activeEvent.time}</span><h2 id="modal-title">{activeEvent.title}</h2><p>{activeEvent.description}</p><div className="modal-facts"><span><CalendarDays size={16} />{dateParts(activeEvent.date).full}</span><span><MapPin size={16} />{activeEvent.location}</span><span><Clock3 size={16} />{activeEvent.time}</span></div><div className="purchase-row"><div className="price-block"><strong>{money(activeEvent.priceCents)}</strong><span>per ticket</span></div>{soldOut(activeEvent) ? <button className="buy-button waitlist-button" disabled={busy} onClick={() => void joinWaitlist(activeEvent)}>Join waitlist <ArrowRight size={16} /></button> : <><label className="quantity"><span className="sr-only">Number of tickets</span><select value={seatCount} onChange={(event) => setSeatCount(Number(event.target.value))}>{Array.from({ length: Math.min(4, activeEvent.capacity - activeEvent.sold) }, (_, index) => <option key={index + 1} value={index + 1}>{index + 1} {index ? "tickets" : "ticket"}</option>)}</select><ChevronDown size={14} /></label><button className="buy-button" disabled={busy} onClick={() => void buy(activeEvent)}>{busy ? "One sec..." : "Get tickets"} <ArrowRight size={16} /></button></>}</div><span className="secure-note"><ShieldCheck size={13} /> No card details are collected in this demo</span></div></section></div>}
+      {activeEvent && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setActiveEvent(null); }}><section className="event-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><button className="modal-close" aria-label="Close" onClick={() => setActiveEvent(null)}><X size={19} /></button><div className={`modal-art art-${activeEvent.color}`}><span className="art-tag">{activeEvent.category}</span><span className="modal-date">{dateParts(activeEvent.date).month} {dateParts(activeEvent.date).day}</span></div><div className="modal-content"><span className="event-meta">{activeEvent.club} <span className="meta-dot" /> {activeEvent.time}</span><h2 id="modal-title">{activeEvent.title}</h2><p>{activeEvent.description}</p><div className="modal-facts"><span><CalendarDays size={16} />{dateParts(activeEvent.date).full}</span><span><MapPin size={16} />{activeEvent.location}</span><span><Clock3 size={16} />{activeEvent.time}</span></div><div className="purchase-row"><div className="price-block"><strong>{money(activeEvent.priceCents)}</strong><span>per ticket</span></div>{soldOut(activeEvent) ? <button className="buy-button waitlist-button" disabled={busy} onClick={() => void joinWaitlist(activeEvent)}>Join waitlist <ArrowRight size={16} /></button> : <><label className="quantity"><span className="sr-only">Number of tickets</span><select value={seatCount} onChange={(event) => setSeatCount(Number(event.target.value))}>{Array.from({ length: Math.min(4, activeEvent.capacity - activeEvent.sold) }, (_, index) => <option key={index + 1} value={index + 1}>{index + 1} {index ? "tickets" : "ticket"}</option>)}</select><ChevronDown size={14} /></label><button className="buy-button" disabled={busy} onClick={() => void buy(activeEvent)}>{busy ? "One sec..." : activeEvent.priceCents ? "Simulated payment" : "Reserve free ticket"} <ArrowRight size={16} /></button></>}</div><span className="secure-note"><ShieldCheck size={13} /> No card details are collected in this demo</span></div></section></div>}
 
-      {signInOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSignInOpen(false); }}><section className="signin-modal" role="dialog" aria-modal="true" aria-labelledby="signin-title"><button className="modal-close" aria-label="Close" onClick={() => setSignInOpen(false)}><X size={19} /></button><div className="signin-mark"><Ticket size={24} /></div><div className="eyebrow"><span className="eyebrow-line" /> WELCOME TO THE SHOW</div><h2 id="signin-title">You’re on the list.<br /><em>Almost.</em></h2><p>University SSO is required in production. For this local preview, choose a demo account:</p><button className="account-choice" disabled={busy} onClick={() => void signIn("student")}><span className="avatar">JL</span><span><b>Student preview</b><small>Browse, buy, and manage tickets</small></span><ArrowRight size={17} /></button><button className="account-choice" disabled={busy} onClick={() => void signIn("officer")}><span className="avatar officer-avatar">AM</span><span><b>Club officer preview</b><small>Scotty Sound event tools</small></span><ArrowRight size={17} /></button><small className="signin-disclaimer">Demo accounts only. No password or payment info is requested.</small></section></div>}
+      {signInOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSignInOpen(false); }}><section className="signin-modal" role="dialog" aria-modal="true" aria-labelledby="signin-title"><button className="modal-close" aria-label="Close" onClick={() => setSignInOpen(false)}><X size={19} /></button><div className="signin-mark"><Ticket size={24} /></div><div className="eyebrow"><span className="eyebrow-line" /> WELCOME TO THE SHOW</div><h2 id="signin-title">You’re on the list.<br /><em>Almost.</em></h2><p>Enter a name for this preview session. No sign-in provider or real authentication is used.</p><label className="preview-name">Your name<input autoComplete="name" maxLength={80} value={signInName} onChange={(event) => setSignInName(event.target.value)} placeholder="e.g. Jordan Lee" /></label><button className="account-choice" disabled={busy || !signInName.trim()} onClick={() => void signIn("student")}><span className="avatar">{signInName.trim().split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase() || "ST"}</span><span><b>Continue as student</b><small>Browse, buy, and manage tickets</small></span><ArrowRight size={17} /></button><button className="account-choice" disabled={busy || !signInName.trim()} onClick={() => void signIn("officer")}><span className="avatar officer-avatar">{signInName.trim().split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase() || "OF"}</span><span><b>Continue as club officer</b><small>Scotty Sound event tools · preview only</small></span><ArrowRight size={17} /></button><small className="signin-disclaimer">Preview identities can be chosen by anyone and are not secure.</small></section></div>}
 
       {createOpen && <div className="modal-backdrop"><section className="create-modal" role="dialog" aria-modal="true" aria-labelledby="create-title"><button className="modal-close" aria-label="Close" onClick={() => setCreateOpen(false)}><X size={19} /></button><div className="eyebrow"><span className="eyebrow-line" /> PUT IT ON THE CALENDAR</div><h2 id="create-title">Create an event<span className="title-period">.</span></h2><form action={(formData) => void createEvent(formData)} className="create-form"><label>Event name<input name="title" required maxLength={90} placeholder="Something people will remember" /></label><div className="form-pair"><label>Date<input name="date" type="date" required /></label><label>Time<input name="time" required defaultValue="6:00 PM" /></label></div><label>Location<input name="location" required placeholder="Building, room, or spot on campus" /></label><div className="form-pair"><label>Category<select name="category"><option>Community</option><option>Music</option><option>Arts & Culture</option></select></label><label>Capacity<input name="capacity" type="number" min="1" required defaultValue="100" /></label></div><div className="form-pair"><label>Price per ticket ($)<input name="price" type="number" min="0" step="0.01" required defaultValue="0" /></label><label>Description<input name="description" maxLength={500} placeholder="What's the plan?" /></label></div><button className="buy-button" type="submit">Publish event <ArrowRight size={16} /></button></form></section></div>}
 

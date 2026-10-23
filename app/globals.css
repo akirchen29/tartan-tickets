@@ -40,6 +40,11 @@ a { color: inherit; text-decoration: none; }
 .avatar { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: #ead7c9; color: #7e452b; font: 600 11px var(--sans); }
 .demo-ribbon { min-height: 34px; display: flex; align-items: center; justify-content: center; gap: 8px; background: #f7eee1; color: #734528; font: 500 9px var(--mono); letter-spacing: .5px; }
 .demo-ribbon span { opacity: .55; }
+.waitlist-notifications { display: grid; gap: 8px; padding: 12px max(24px, calc((100vw - 1050px) / 2)); background: #edf4ec; }
+.waitlist-notice { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 12px 15px; border: 1px solid #d5e1d2; background: #fffefa; }
+.waitlist-notice > div { display: grid; gap: 4px; }
+.waitlist-notice strong { color: var(--green); font-size: 12px; }
+.waitlist-notice span { color: #747b75; font-size: 10px; }
 .page-shell { max-width: 1190px; margin: 0 auto; padding: 0 30px; }
 .hero { min-height: 428px; display: grid; grid-template-columns: 1fr 1fr; align-items: center; border-bottom: 1px solid var(--line); }
 .hero-copy { padding: 37px 0 33px; position: relative; z-index: 1; }
@@ -211,8 +216,11 @@ a { color: inherit; text-decoration: none; }
 .signin-modal > p { color: #747b75; font-size: 11px; line-height: 1.7; }
 .account-choice { width: 100%; display: flex; align-items: center; gap: 12px; margin-top: 10px; padding: 11px; border: 1px solid var(--line); background: white; text-align: left; cursor: pointer; transition: .18s; }
 .account-choice:hover { border-color: #bdb6a7; background: #faf8f2; }
+.account-choice:disabled { cursor: not-allowed; opacity: .55; }
 .account-choice > span:nth-child(2) { display: grid; flex: 1; gap: 4px; }
 .account-choice b { font-size: 11px; }.account-choice small { color: #858c85; font-size: 9px; }
+.preview-name { display: grid; gap: 6px; margin: 14px 0; color: #707873; font-size: 10px; }
+.preview-name input { width: 100%; padding: 11px; border: 1px solid #dedbd1; background: white; color: var(--ink); font: inherit; }
 .officer-avatar { background: #cad7cb; color: #315d48; }
 .signin-disclaimer { display: block; margin-top: 15px; color: #979b94; font-size: 8px; text-align: center; }
 .create-modal { width: min(520px, 100%); padding: 28px; }
@@ -252,6 +260,9 @@ a { color: inherit; text-decoration: none; }
   .user-name, .user-button > svg { display: none; }
   .user-button { padding: 0; }
   .demo-ribbon { padding: 7px 12px; font-size: 7px; text-align: center; }
+  .waitlist-notifications { padding: 9px 12px; }
+  .waitlist-notice { align-items: flex-start; flex-direction: column; gap: 10px; padding: 11px; }
+  .waitlist-notice .buy-button { width: 100%; }
   .hero { min-height: 0; grid-template-columns: 1fr; padding: 36px 0 10px; }
   .hero-copy { padding: 5px 0 0; }
   .hero h1 { margin-top: 17px; font-size: clamp(45px, 12vw, 60px); }

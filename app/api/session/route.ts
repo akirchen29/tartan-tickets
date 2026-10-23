@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { createSessionToken, getSession, sessionCookieName, type DemoUser } from "@/lib/session";
 
@@ -10,20 +11,28 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "University sign-in is not configured for this deployment." }, { status: 503 });
   }
 
-  let body: { role?: string };
+  let body: { name?: string; role?: string };
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ error: "Invalid request." }, { status: 400 });
   }
 
-  if (body.role !== "student" && body.role !== "officer") {
-    return NextResponse.json({ error: "Choose a valid demo account." }, { status: 400 });
+  const name = typeof body.name === "string" ? body.name.trim().replace(/\s+/g, " ") : "";
+  if (!name || name.length > 80 || (body.role !== "student" && body.role !== "officer")) {
+    return NextResponse.json({ error: "Enter your name and choose a preview role." }, { status: 400 });
   }
 
-  const user: DemoUser = body.role === "officer"
-    ? { id: "demo-officer", name: "Alex Morgan", email: "alex.morgan@andrew.cmu.edu", role: "officer", club: "Scotty Sound", issuedAt: Date.now() }
-    : { id: "demo-student", name: "Jordan Lee", email: "jordan.lee@andrew.cmu.edu", role: "student", club: null, issuedAt: Date.now() };
+  const role = body.role;
+  const id = `preview-${createHash("sha256").update(`${role}:${name.toLowerCase()}`).digest("hex").slice(0, 24)}`;
+  const user: DemoUser = {
+    id,
+    name,
+    email: "",
+    role,
+    club: role === "officer" ? "Scotty Sound" : null,
+    issuedAt: Date.now(),
+  };
 
   let token: string;
   try {
