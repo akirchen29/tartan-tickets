@@ -7,8 +7,8 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  if (process.env.DEMO_MODE !== "true" || process.env.NODE_ENV === "production") {
-    return NextResponse.json({ error: "University sign-in is not configured for this deployment." }, { status: 503 });
+  if (process.env.DEMO_MODE !== "true") {
+    return NextResponse.json({ error: "Preview sign-in is not enabled for this deployment." }, { status: 503 });
   }
 
   let body: { name?: string; role?: string };
