@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { getEvent } from "@/lib/events";
 import { getSession } from "@/lib/session";
-import { isRateLimited, promoteWaitlist, store, type TicketOrder } from "@/lib/store";
+import { isCheckoutRateLimited, promoteWaitlist, store, type TicketOrder } from "@/lib/store";
 
 export async function GET() {
   const user = await getSession();
@@ -15,9 +15,6 @@ export async function POST(request: NextRequest) {
   const user = await getSession();
   if (!user) return NextResponse.json({ error: "Sign in required." }, { status: 401 });
   promoteWaitlist();
-  if (isRateLimited(user, "checkout", 5, 10 * 60 * 1000)) {
-    return NextResponse.json({ error: "Too many checkout attempts. Try again later." }, { status: 429 });
-  }
 
   let body: { eventId?: string; seats?: number; holdId?: string };
   try {
@@ -34,6 +31,9 @@ export async function POST(request: NextRequest) {
     }
     const event = getEvent(hold.eventId);
     if (!event) return NextResponse.json({ error: "Event not found." }, { status: 404 });
+    if (isCheckoutRateLimited(user.id, event.id)) {
+      return NextResponse.json({ error: "Too many checkout attempts. Try again later." }, { status: 429 });
+    }
     const order: TicketOrder = {
       id: randomUUID(),
       eventId: event.id,
@@ -53,6 +53,9 @@ export async function POST(request: NextRequest) {
   const seats = body.seats;
   if (!event || !Number.isInteger(seats) || !seats || seats < 1 || seats > 4) {
     return NextResponse.json({ error: "Choose an event and between 1 and 4 tickets." }, { status: 400 });
+  }
+  if (isCheckoutRateLimited(user.id, event.id)) {
+    return NextResponse.json({ error: "Too many checkout attempts. Try again later." }, { status: 429 });
   }
   if (event.capacity - event.sold < seats) {
     return NextResponse.json({ error: "Not enough tickets remain. Join the waitlist instead." }, { status: 409 });

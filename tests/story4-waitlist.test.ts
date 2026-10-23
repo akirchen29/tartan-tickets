@@ -67,6 +67,8 @@ describe("Story 4 waitlist", () => {
     store.notifications.length = 0;
     store.waitlist.clear();
     store.requestTimes.clear();
+    store.checkoutLimits.clear();
+    store.checkoutBlockedUntil.clear();
     vi.mocked(getSession).mockReset();
   });
 

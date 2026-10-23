@@ -30,11 +30,17 @@ export type WaitlistNotification = {
   holdExpiresAt: string;
 };
 
+type CheckoutRateLimit = {
+  attempts: number[];
+};
+
 type TartanStore = {
   orders: TicketOrder[];
   waitlist: Map<string, WaitlistEntry[]>;
   notifications: WaitlistNotification[];
   requestTimes: Map<string, number[]>;
+  checkoutLimits: Map<string, CheckoutRateLimit>;
+  checkoutBlockedUntil: Map<string, number>;
 };
 
 type PreviousTartanStore = {
@@ -42,6 +48,8 @@ type PreviousTartanStore = {
   waitlist: Map<string, WaitlistEntry[] | Set<string>>;
   notifications?: WaitlistNotification[];
   requestTimes: Map<string, number[]>;
+  checkoutLimits?: Map<string, CheckoutRateLimit>;
+  checkoutBlockedUntil?: Map<string, number>;
 };
 
 const globalForStore = globalThis as typeof globalThis & { tartanStore?: PreviousTartanStore };
@@ -51,6 +59,8 @@ export const store: TartanStore = {
   waitlist: new Map(),
   notifications: previousStore?.notifications ?? [],
   requestTimes: previousStore?.requestTimes ?? new Map(),
+  checkoutLimits: previousStore?.checkoutLimits ?? new Map(),
+  checkoutBlockedUntil: previousStore?.checkoutBlockedUntil ?? new Map(),
 };
 for (const [eventId, entries] of previousStore?.waitlist ?? []) {
   const queue = Array.isArray(entries) ? entries : Array.from(entries, (userId) => ({
@@ -104,5 +114,26 @@ export function isRateLimited(user: DemoUser, action: string, limit: number, win
   }
   recent.push(now);
   store.requestTimes.set(key, recent);
+  return false;
+}
+
+export function isCheckoutRateLimited(userId: string, eventId: string) {
+  const now = Date.now();
+  const windowMs = 10 * 60 * 1000;
+  const blockMs = 30 * 60 * 1000;
+  const limit = 5;
+  if ((store.checkoutBlockedUntil.get(userId) ?? 0) > now) return true;
+
+  const key = `${userId}:${eventId}`;
+  const current = store.checkoutLimits.get(key) ?? { attempts: [] };
+  const recent = current.attempts.filter((time) => now - time < windowMs);
+  if (recent.length >= limit) {
+    store.checkoutLimits.set(key, { attempts: recent });
+    store.checkoutBlockedUntil.set(userId, now + blockMs);
+    return true;
+  }
+
+  recent.push(now);
+  store.checkoutLimits.set(key, { attempts: recent });
   return false;
 }
